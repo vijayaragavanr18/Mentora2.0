@@ -1,5 +1,6 @@
-import llm from "../../utils/llm/llm"
+import llm, { embeddings } from "../../utils/llm/llm"
 import { normalizeTopic } from "../../utils/text/normalize"
+import { getRetriever } from "../../utils/database/db"
 
 export type QuizItem = {
   id: number
@@ -104,11 +105,12 @@ function validItem(x: any) {
 }
 function validQuiz(a: any): a is QuizItem[] { return Array.isArray(a) && a.length === 5 && a.every(validItem) }
 
-async function ask(topicIn: any, sys: string) {
+async function ask(topicIn: any, sys: string, context?: string) {
   const topic = normalizeTopic(topicIn)
+  const ctxMsg = context ? `\n\nReference Material:\n${context}` : ""
   const msgs = [
     { role: "system", content: sys },
-    { role: "user", content: `Topic:\n${topic}\nReturn only the JSON array.` }
+    { role: "user", content: `Topic:\n${topic}${ctxMsg}\nReturn only the JSON array.` }
   ] as const
   const r = await llm.invoke([...msgs] as any)
   const raw = typeof r === "string" ? r : String((r as any)?.content ?? "")
@@ -116,13 +118,22 @@ async function ask(topicIn: any, sys: string) {
   return tryParse<any>(txt)
 }
 
-export async function handleQuiz(topic: string): Promise<QuizItem[]> {
-  const parsed = await ask(topic, SYS)
+export async function handleQuiz(topic: string, collection?: string): Promise<QuizItem[]> {
+  let ctx = ""
+  if (collection) {
+    try {
+      const retriever = await getRetriever(collection, embeddings)
+      const docs = await retriever.getRelevantDocuments(topic)
+      ctx = docs.map(d => d.pageContent).join("\n\n").slice(0, 3000)
+    } catch (e) { console.error("RAG fail", e) }
+  }
+
+  const parsed = await ask(topic, SYS, ctx)
   if (parsed) {
     const out = coerce(parsed)
     if (validQuiz(out)) return out
   }
-  const parsed2 = await ask(topic, SYS_STRICT)
+  const parsed2 = await ask(topic, SYS_STRICT, ctx)
   const out2 = coerce(parsed2)
   if (!validQuiz(out2)) throw new Error("Invalid quiz JSON from model")
   return out2

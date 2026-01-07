@@ -1,133 +1,150 @@
 # PageLM
 
-**A AI powered education platform that transforms study materials into interactive learning experiences, slightly inspired by NotebookLM**
+**An AI-powered education platform that transforms study materials into interactive learning experiences.**
+
+PageLM converts your documents (PDFs, notes, recordings) into structured learning tools—including quizzes, flashcards, structured notes, and podcasts—running entirely locally or in the cloud. It is designed to be a private, open-source alternative to tools like NotebookLM.
+
+![PageLM Logo](assets/logo.png)
 
 ## 🚀 Features
 
-PageLM converts study material into **interactive resources** including quizzes, flashcards, structured notes, and podcasts.  
-The platform provides a modern interface for students, educators, and researchers to **enhance learning efficiency** using state-of-the-art LLMs and TTS systems.
+PageLM provides a modern interface for students, educators, and researchers to **enhance learning efficiency**.
 
 ### Learning Tools
 
-- **Contextual Chat** – Ask questions about uploaded documents (PDF, DOCX, Markdown, TXT)
-- **SmartNotes** – Generate Cornell-style notes automatically from topics or uploaded content
-- **Flashcards** – Extract non-overlapping flashcards for spaced repetition
-- **Quizzes** – Create interactive quizzes with hints, explanations, and scoring
-- **AI Podcast** – Convert notes and topics into engaging audio content for learning on the go
-- **Voice Transcribe** - Convert lecture recordings and voice notes into organized, searchable study materials instantly.
-- **Homework Planner** - Plans your Homework Smartly using AI, Assists if your stuck.
-- **ExamLab** - Simulate any exam, get feedback, and be prepared for the exam
-- **Debate** - Debate with AI to improve your Debate skills.
-- **Study Companion** - A personalised AI Companion that assists you.
+- **Contextual Chat** – Ask questions about uploaded documents (PDF, DOCX, Markdown, TXT) with citations.
+- **SmartNotes** – Generate Cornell-style notes automatically from topics or uploaded content.
+- **Flashcards** – Extract non-overlapping flashcards for spaced repetition study.
+- **Quizzes** – Create interactive quizzes with hints, explanations, and automatic scoring.
+- **AI Podcast** – Convert notes and topics into engaging audio conversations for learning on the go.
+- **Voice Transcribe** – Convert lecture recordings and voice notes into searchable text.
+- **Homework Planner** – AI-assisted planning to break down assignments and overcome blocks.
+- **ExamLab** – Simulate exams with customizable timing and difficulty to prepare for the real thing.
+- **Debate** – Practice your argumentation skills against an AI opponent on any topic.
+- **Study Companion** – A personalized AI assistant that guides your learning journey.
 
-### Supported AI Models
+### Privacy First & Local AI
 
-- Google Gemini • OpenAI GPT • Anthropic Claude • xAI Grok • Ollama (local) • OpenRouter
+- **Ollama Integration** – Run powerful LLMs (like Llama 3) entirely offline on your own hardware.
+- **Data Privacy** – Your documents and chats stay on your machine (when using local models).
+- **Flexible Backends** – While optimized for Ollama, PageLM also supports OpenAI, Gemini, Anthropic, and Grok if you prefer cloud models.
 
-### Embedding Providers
+## 💡 Why PageLM?
 
-- OpenAI • Gemini • Ollama
+Unlike general-purpose chat bots, PageLM is built specifically for **structured learning**.
 
-### Technical Highlights
-
-- WebSocket streaming for real-time chat, notes, and podcast generation
-- JSON or vector database support for embeddings and retrieval
-- File-based persistent storage for generated content
-- Markdown-based outputs for structured answers and notes
-- Configurable multi-provider setup for LLMs and TTS engines
+| Feature | PageLM | Standard Chatbots |
+| :--- | :--- | :--- |
+| **Input** | Upload structured files (PDF, DOCX) & Audio | Mostly plain text / simple uploads |
+| **Output** | Structured Notes, Quizzes, Podcasts, Exams | Text paragraphs |
+| **Storage** | Project-based "Learning Spaces" | Ephemeral conversations |
+| **Privacy** | Local-first (Ollama), Self-hosted | Cloud-only (usually) |
 
 ## 🛠️ Technology Stack
 
-| Component      | Technology                               |
-| -------------- | ---------------------------------------- |
-| **Backend**    | Node.js, TypeScript, LangChain, Langraph |
-| **Frontend**   | Vite, React, TailwindCSS                 |
-| **Database**   | JSON (default), optional vector DB       |
-| **AI/ML**      | Multiple LLM providers, embeddings       |
-| **Audio**      | Edge TTS, ElevenLabs, Google TTS         |
-| **Deployment** | Docker, Docker Compose                   |
-| **Docs**       | pdf-lib, mammoth, pdf-parse              |
+| Component | Technology |
+| :--- | :--- |
+| **Backend** | Node.js, TypeScript, Express, LangChain |
+| **Frontend** | React, Vite, TailwindCSS, TypeScript |
+| **Database** | Keyv (SQLite/JSON) for lightweight storage |
+| **AI/ML** | Ollama (Local), LangChain (Orchestration) |
+| **Audio** | Edge TTS, Google Cloud Speech, OpenAI Whisper |
 
+## ⚡ Getting Started
 
 ### Prerequisites
 
-- Node.js v21.18+
-- npm or pnpm
-- ffmpeg (required for podcast audio)
-- Docker (optional)
+- **Node.js** v21+
+- **Ollama** (for local AI) - [Download Ollama](https://ollama.com/)
+- **FFmpeg** (required for podcast audio processing)
 
-### Local Development
+### Installation
 
+1.  **Clone the repository**
+    ```bash
+    git clone https://github.com/vijayaragavanr18/pagelm.git
+    cd pagelm
+    ```
+
+2.  **Run the setup script** (Installs dependencies for both frontend and backend)
+    
+    *Linux/Mac:*
+    ```bash
+    chmod +x setup.sh
+    ./setup.sh
+    ```
+
+    *Windows:*
+    ```powershell
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+    .\setup.ps1
+    ```
+
+    *Manual:*
+    ```bash
+    cd backend && npm install
+    cd ../frontend && npm install
+    ```
+
+3.  **Environment Configuration**
+    
+    Copy the example environment file:
+    ```bash
+    # Root directory
+    cp .env.example .env
+    ```
+    
+    Edit `.env` to configure your settings. By default, it is set up for **Ollama**.
+    Ensure you have the required models pulled:
+    ```bash
+    ollama pull llama3.2:3b
+    ollama pull nomic-embed-text
+    ```
+
+### Running the App
+
+You need to run the backend and frontend in separate terminals.
+
+**Terminal 1 (Backend):**
 ```bash
-# Clone the repository
-git clone git remote add origin https://github.com/vijayaragavanr18/pagelm
-git branch -M main
-git push -u origin main
-cd pagelm
-
-# Linux:
-  chmod 777 ./setup.sh
-  ./setup.sh
-
-# Windows:
-  Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-  ./setup.ps1
-
-# Manual (Both Linux/Windows):
-  # Install dependencies
-  cd backend
-  npm install
-  cd ../frontend
-  npm install
-
-  # Setup environment
-  cd ..
-  npm i -g nodemon
-  cp .env.example .env
-  # Make sure to configure API keys and settings in .env
-
-  # Run these two commands in separate terminals but inside the project directory.
-  # Run backend
-  cd backend
-  npm run dev
-
-  # Run frontend
-  cd frontend
-  npm run dev
+cd backend
+npm run dev
 ```
 
-👉 Access at: **http://localhost:5173**
+**Terminal 2 (Frontend):**
+```bash
+cd frontend
+npm run dev
+```
 
-### Docker Deployment
+👉 **Open your browser at:** [http://localhost:5173](http://localhost:5173)
+
+## 🐳 Docker Deployment
+
+For a production-ready or simplified containerized setup, check out the [Deployment Guide](DEPLOYMENT.md).
 
 ```bash
-# Development
 docker compose up --build
-
-# Production
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
-
-- Frontend: http://localhost:5173 (dev) / http://localhost:8080 (prod)
-- Backend: http://localhost:5000
-
----
 
 ## ⚙️ Configuration
 
-All configuration is handled via environment variables:
+All configuration is handled via environment variables in `.env`:
 
-- **LLM Provider** – Choose your model backend
-- **TTS Engine** – Select speech service for podcasts
-- **Database Backend** – JSON or vector DB
-- **File Upload Limits** – Customize size/format limits
+- `LLM_PROVIDER`: `ollama` (default), `openai`, `gemini`, etc.
+- `OLLAMA_BASE_URL`: URL for your local Ollama instance.
+- `TTS_PROVIDER`: Service for generating podcast audio.
 
-See `.env.example` for all options.
+See `.env.example` for a full list of options.
 
-## Areas to Contribute
+## 🤝 Contributing
 
-- AI model integrations
-- Mobile app support
-- Performance improvements
-- Accessibility features
-- Docs & tutorials
+Contributions are welcome!
+- **AI model integrations**
+- **Mobile app support**
+- **Performance improvements**
+- **Accessibility features**
+
+## 📄 License
+
+This project is licensed under the terms found in the [LICENSE](LICENSE.md) file.

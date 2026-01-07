@@ -6,8 +6,7 @@
     "start": "node backend/dist/src/core/index.js"
   },
   "authors": [
-    "nullure (https://github.com/nullure)",
-    "recabasic (https://github.com/recabasic)"
+    "Vijayaragavan R (https://github.com/vijayaragavanr18)"
   ],
   "engines": {
     "node": ">=21.18.0"
@@ -24,10 +23,12 @@
     "@langchain/ollama": "^0.2.4",
     "@langchain/openai": "^0.6.12",
     "@pdf-lib/fontkit": "^1.1.1",
+    "@types/express": "^5.0.6",
     "busboy": "^1.6.0",
     "cors": "^2.8.5",
     "d3-force": "^3.0.0",
     "docxtemplater": "^3.66.7",
+    "express": "^5.2.1",
     "keyv": "^5.5.1",
     "langchain": "^0.3.7",
     "mammoth": ">=1.11.0",

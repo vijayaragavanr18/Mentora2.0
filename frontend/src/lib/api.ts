@@ -300,11 +300,11 @@ export function flashcards(topic: string) {
   });
 }
 
-export async function quizStart(topic: string) {
+export async function quizStart(topic: string, chatId?: string) {
   return req<QuizStartResponse>(`${env.backend}/quiz`, {
     method: "POST",
     headers: jsonHeaders({}),
-    body: JSON.stringify({ topic })
+    body: JSON.stringify({ topic, chatId })
   }
   )
 }
@@ -322,10 +322,11 @@ export async function podcastStart(payload: { topic: string }) {
 }
 
 export function connectPodcastStream(pid: string, onEvent: (ev: any) => void) {
-  const wsUrl = `${env.backend.replace(/^http/, "ws")}/ws/podcast?pid=${pid}`
+  const wsUrl = wsURL(`/ws/podcast?pid=${encodeURIComponent(pid)}`)
   const ws = new WebSocket(wsUrl)
 
   ws.onopen = () => {
+    // Connection established
   }
 
   ws.onmessage = (e) => {
@@ -333,15 +334,24 @@ export function connectPodcastStream(pid: string, onEvent: (ev: any) => void) {
       const msg = JSON.parse(e.data)
       onEvent(msg)
     } catch (err) {
+      console.error('[Podcast] Failed to parse WebSocket message:', err)
       onEvent({ type: "error", error: "invalid_message" })
     }
   }
 
   ws.onclose = (e) => {
+    if (e.code !== 1000 && e.code !== 1001) {
+      console.warn('[Podcast] WebSocket closed unexpectedly:', e.code, e.reason)
+      onEvent({ type: "error", error: "connection_closed" })
+    }
   }
 
-  ws.onerror = () => onEvent({ type: "error", error: "stream_error" } as any)
-  return { ws, close: () => { try { ws.close() } catch { } } }
+  ws.onerror = (error) => {
+    console.error('[Podcast] WebSocket error:', error)
+    onEvent({ type: "error", error: "stream_error" } as any)
+  }
+
+  return { ws, close: () => { try { if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close() } catch { } } }
 }
 
 export function connectQuizStream(quizId: string, onEvent: (ev: QuizEvent) => void) {
@@ -534,11 +544,11 @@ export type DebateSession = {
   createdAt: number;
 }
 
-export async function startDebate(topic: string, position: "for" | "against") {
+export async function startDebate(topic: string, position: "for" | "against", chatId?: string) {
   return req<DebateStartResponse>(`${env.backend}/debate/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ topic, position }),
+    body: JSON.stringify({ topic, position, chatId }),
     timeout: 30000,
   })
 }

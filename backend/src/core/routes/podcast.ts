@@ -1,5 +1,6 @@
 import path from "path"
 import fs from "fs"
+import crypto from "crypto"
 import { makeScript, makeAudio } from "../../services/podcast"
 import { emitToAll } from "../../utils/chat/ws"
 import { config } from "../../config/env"
@@ -28,7 +29,7 @@ async function startJobIfReady(pid: string) {
 
 export function podcastRoutes(app: any) {
   app.ws("/ws/podcast", (ws: any, req: any) => {
-    const u = new URL(req.url, config.baseUrl || "http://dummy")
+    const u = new URL(req.url, "http://localhost")
     const pid = u.searchParams.get("pid")
     
     if (!pid) {
@@ -42,6 +43,10 @@ export function podcastRoutes(app: any) {
     }
     set.add(ws)
     
+    ws.on("error", (err: any) => {
+      console.error(`[Podcast WS] WebSocket error for pid ${pid}:`, err?.message || err)
+    })
+    
     ws.on("close", () => {
       set!.delete(ws)
       if (set!.size === 0) {
@@ -49,8 +54,14 @@ export function podcastRoutes(app: any) {
       }
     })
     
-    const readyMsg = JSON.stringify({ type: "ready", pid })
-    ws.send(readyMsg)
+    try {
+      const readyMsg = JSON.stringify({ type: "ready", pid })
+      if (ws.readyState === 1) {
+        ws.send(readyMsg)
+      }
+    } catch (err) {
+      console.error(`[Podcast WS] Failed to send ready message:`, err)
+    }
     
     setTimeout(() => {
       startJobIfReady(pid).catch(err => {
@@ -64,14 +75,14 @@ export function podcastRoutes(app: any) {
       const topic = String(req.body?.topic || req.body?.title || "").trim()
       
       if (!topic) {
-        return res.status(400).send({ error: "topic required" })
+        return res.status(400).json({ ok: false, error: "topic required" })
       }
 
-      const pid = cryptoRandom()
+      const pid = crypto.randomUUID()
       const dir = path.join(process.cwd(), "storage", "podcasts", pid)
       const base = topic.replace(/[^a-z0-9]/gi, "_").slice(0, 50) || "podcast"
 
-      res.status(202).send({ ok: true, pid, stream: `/ws/podcast?pid=${pid}` })
+      res.status(202).json({ ok: true, pid, stream: `/ws/podcast?pid=${pid}` })
 
       const job = async () => {
         try {
@@ -132,24 +143,16 @@ export function podcastRoutes(app: any) {
           fileStream.pipe(res)
           fileStream.on('error', (err) => {
             if (!res.headersSent) {
-              res.status(500).send({ error: 'Download failed' })
+              res.status(500).json({ ok: false, error: 'Download failed' })
             }
           })
           return
         }
       }
       
-      return res.status(404).send({ error: "File not found" })
+      return res.status(404).json({ ok: false, error: "File not found" })
     } catch (e) {
       next(e)
     }
-  })
-}
-
-function cryptoRandom() {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0
-    const v = c === "x" ? r : (r & 0x3) | 0x8
-    return v.toString(16)
   })
 }

@@ -13,6 +13,7 @@ export default function Landing() {
   const [showLength, setShowLength] = useState(false);
   const [stagedFile, setStagedFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
@@ -33,6 +34,7 @@ export default function Landing() {
 
   const onSend = async (override?: string) => {
     if (busy) return;
+    setError(null);
     const q = (override ?? prompt).trim();
     if (!q && !stagedFile) return;
 
@@ -45,11 +47,16 @@ export default function Landing() {
     try {
       if (stagedFile) {
         const { chatId } = await chatMultipart(q || " ", [stagedFile]);
+        window.dispatchEvent(new Event("chat:created"));
         navigate(`/chat?chatId=${encodeURIComponent(chatId)}&q=${encodeURIComponent(q)}`);
         return;
       }
       const r = await chatJSON({ q });
+      window.dispatchEvent(new Event("chat:created"));
       navigate(`/chat?chatId=${encodeURIComponent(r.chatId)}&q=${encodeURIComponent(q)}`);
+    } catch (err: any) {
+      console.error("Failed to start chat:", err);
+      setError(err.message || "Failed to start conversation. Please check your connection.");
     } finally {
       setBusy(false);
     }
@@ -180,6 +187,21 @@ export default function Landing() {
       <ExploreTopics />
 
       <input ref={fileRef} type="file" className="hidden" onChange={onFileChange} />
+
+      {error && (
+        <div className="fixed bottom-6 right-6 bg-red-900/90 border border-red-700 rounded-xl p-4 text-red-200 shadow-lg max-w-md animate-[slideInUp_0.3s_ease-out] z-50">
+          <div className="flex items-start gap-3">
+            <span className="text-xl">⚠️</span>
+            <div className="flex-1 font-medium">{error}</div>
+            <button
+              onClick={() => setError(null)}
+              className="text-red-400 hover:text-red-200 transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

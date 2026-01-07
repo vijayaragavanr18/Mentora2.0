@@ -17,7 +17,11 @@ export default function Sidebar() {
   const [chats, setChats] = useState<ChatsResponse | null>(null);
 
   useEffect(() => {
-    getChats().then(data => setChats(data));
+    const fetchChats = () => getChats().then(data => setChats(data)).catch(() => setChats({ chats: [] }));
+    fetchChats();
+    const onChatCreated = () => fetchChats();
+    window.addEventListener("chat:created", onChatCreated);
+    return () => window.removeEventListener("chat:created", onChatCreated);
   }, []);
 
   const b = (t: string) => `p-2 rounded-xl duration-300 transition-all ${p === t ? 'text-white bg-stone-800' : 'hover:bg-stone-900 hover:text-stone-200'}`
@@ -34,7 +38,7 @@ export default function Sidebar() {
     <aside className='left-0 bottom-0 w-screen md:w-fit md:h-screen fixed p-4 z-50 lg:flex'>
       <div id='idk' className='w-64 md:order-2 h-full z-40 rounded-l-none rounded-2xl bg-stone-950 border border-l-transparent border-stone-900 hidden flex-col p-4 space-y-3 overflow-y-auto custom-scroll'>
         {chats?.chats.map((chat) => (
-          <Link key={chat.id} to={`/chat/?chatId=${chat.id}`} className='p-2 hover:text-stone-200 hover:bg-stone-900 w-full rounded-xl block text-sm min-h-fit truncate'>
+          <Link key={chat.id} to={`/chat?chatId=${chat.id}`} className='p-2 hover:text-stone-200 hover:bg-stone-900 w-full rounded-xl block text-sm min-h-fit truncate'>
             {chat.title || 'Untitled Chat'}
           </Link>
         ))}

@@ -1,5 +1,6 @@
-import llm from "../../utils/llm/llm";
+import llm, { embeddings } from "../../utils/llm/llm";
 import db from "../../utils/database/keyv";
+import { getRetriever } from "../../utils/database/db";
 
 export type DebateMessage = {
     role: "user" | "assistant";
@@ -15,6 +16,7 @@ export type DebateSession = {
     createdAt: number;
     status?: "active" | "user_surrendered" | "ai_conceded" | "completed";
     winner?: "user" | "ai" | "draw";
+    contextId?: string;
 };
 
 export type DebateAnalysis = {
@@ -47,7 +49,7 @@ function toText(out: any): string {
     return String(out ?? "");
 }
 
-export async function createDebateSession(topic: string, position: "for" | "against"): Promise<DebateSession> {
+export async function createDebateSession(topic: string, position: "for" | "against", contextId?: string): Promise<DebateSession> {
     const id = `debate_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     const session: DebateSession = {
         id,
@@ -55,6 +57,7 @@ export async function createDebateSession(topic: string, position: "for" | "agai
         position,
         messages: [],
         createdAt: Date.now(),
+        contextId,
     };
 
     const list = await getDebatesList();
@@ -102,7 +105,20 @@ export async function* streamDebateResponse(
     // Check if AI should concede (after 3+ exchanges, detect weak position)
     const shouldCheckConcede = session.messages.length >= 6; // 3+ exchanges
 
+    let context = "";
+    if (session.contextId) {
+        try {
+            const retriever = await getRetriever(session.contextId, embeddings);
+            const docs = await retriever.getRelevantDocuments(session.topic);
+            context = docs.map((d: any) => d.pageContent).join("\n\n").slice(0, 3000);
+        } catch (e) {
+            console.error("Debate RAG failed:", e);
+        }
+    }
+
     const systemPrompt = `You are an expert debater participating in a formal debate about: "${session.topic}"
+
+${context ? `Use the following reference material to support your arguments:\n${context}\n\n` : ""}
 
 Your position: You are arguing ${opposingPosition.toUpperCase()} the topic.
 User's position: They are arguing ${session.position.toUpperCase()} the topic.

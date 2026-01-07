@@ -296,7 +296,19 @@ export async function askWithContext(opts: AskWithContextOptions): Promise<AskPa
     content: `Context:\n${ctx}\n\nQuestion:\n${safeQ}\n\nTopic:\n${topic}\n\nReturn only the JSON object.`
   })
 
-  const res = await llm.call(messages as any)
+  console.log('[askWithContext] About to call LLM with', messages.length, 'messages')
+  console.log('[askWithContext] User question:', safeQ.slice(0, 100))
+  
+  let res: any
+  try {
+    res = await llm.call(messages as any)
+    console.log('[askWithContext] LLM call succeeded')
+  } catch (e: any) {
+    console.error('[askWithContext] LLM call FAILED:', e?.message || e)
+    console.error('[askWithContext] stack:', e?.stack)
+    throw e
+  }
+  
   const draft = toText(res).trim()
   const jsonStr = extractFirstJsonObject(draft) || draft
   const parsed = tryParse<any>(jsonStr)
@@ -320,6 +332,8 @@ export async function handleAsk(
   k = 6,
   historyArg?: any[]
 ): Promise<AskPayload> {
+  console.log('[handleAsk] Called with q:', typeof q === 'string' ? q.slice(0, 50) : q)
+  
   if (typeof q === "object" && q !== null) {
     const params = q
     return handleAsk(params.q, params.namespace ?? ns, k, params.history ?? historyArg)
@@ -328,16 +342,28 @@ export async function handleAsk(
   const questionRaw = typeof q === "string" ? q : String(q ?? "")
   const safeQ = normalizeTopic(questionRaw)
   const nsFinal = typeof ns === "string" && ns.trim() ? ns : "pagelm"
+  
+  console.log('[handleAsk] About to call RAG search for:', safeQ.slice(0, 50))
 
-  const rag = await execDirect({
-    agent: "researcher",
-    plan: { steps: [{ tool: "rag.search", input: { q: safeQ, ns: nsFinal, k }, timeoutMs: 8000, retries: 1 }] },
-    ctx: { ns: nsFinal }
-  })
+  let rag: any
+  try {
+    rag = await execDirect({
+      agent: "researcher",
+      plan: { steps: [{ tool: "rag.search", input: { q: safeQ, ns: nsFinal, k }, timeoutMs: 8000, retries: 1 }] },
+      ctx: { ns: nsFinal }
+    })
+    console.log('[handleAsk] RAG search completed, results:', Array.isArray(rag) ? rag.length : 'not array')
+  } catch (e: any) {
+    console.error('[handleAsk] RAG search FAILED:', e?.message || e)
+    // Continue with empty context instead of failing
+    rag = []
+  }
 
   const ctxDocs = Array.isArray(rag) ? (rag as Array<{ text?: string }>) : []
   const ctx = ctxDocs.map(d => d?.text || "").join("\n\n") || "NO_CONTEXT"
   const topic = guessTopic(safeQ) || "General"
+  
+  console.log('[handleAsk] Calling askWithContext with topic:', topic)
 
   return askWithContext({
     question: questionRaw,

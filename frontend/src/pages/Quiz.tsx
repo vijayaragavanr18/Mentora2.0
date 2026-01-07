@@ -23,6 +23,7 @@ export default function Quiz() {
   const location = useLocation() as any;
 
   const passedTopic = (location?.state && location.state.topic) || "";
+  const passedChatId = (location?.state && location.state.chatId) || "";
   const initialTopic = search.get("topic") || passedTopic || "";
 
   const [topic, setTopic] = useState(initialTopic);
@@ -69,7 +70,7 @@ export default function Quiz() {
     setConnecting(true);
 
     try {
-      const s = await quizStart(trimmed);
+      const s = await quizStart(trimmed, passedChatId);
       const { close } = connectQuizStream(s.quizId, (ev: QuizEvent) => {
         if (ev.type === "quiz") {
           const arr = takeQuizArray(ev.quiz).map(q => ({

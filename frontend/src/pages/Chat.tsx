@@ -2,6 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { env } from "../config/env";
 import { chatJSON, getChatDetail, type FlashCard, createFlashcard, listFlashcards, deleteFlashcard, getChats, type ChatMessage, type SavedFlashcard, podcastStart } from "../lib/api";
+
+function wsURL(path: string) {
+  const u = new URL(env.backend);
+  const proto = u.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${u.host}${path}`;
+}
 import MarkdownView from "../components/Chat/MarkdownView";
 import ActionRow from "../components/Chat/ActionRow";
 import FlashCards from "../components/Chat/FlashCards";
@@ -72,6 +78,7 @@ export default function Chat() {
   const [connecting, setConnecting] = useState<boolean>(!!(initialChatId || initialQuestion));
   const [awaitingAnswer, setAwaitingAnswer] = useState<boolean>(false);
   const [topic, setTopic] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
   const { setDocument } = useCompanion();
 
   const selPopupRef = useRef<HTMLDivElement>(null);
@@ -94,13 +101,15 @@ export default function Chat() {
               setChatId(latest.id);
               navigate(`/chat?chatId=${encodeURIComponent(latest.id)}`, { replace: true, state: { chatId: latest.id } });
             } else {
-              navigate("/", { replace: true });
+              // No chats exist yet, stay here but maybe clear params
+              // navigate("/", { replace: true });
             }
           } else {
-            navigate("/", { replace: true });
+            // navigate("/", { replace: true });
           }
-        } catch {
-          navigate("/", { replace: true });
+        } catch (e: any) {
+          console.error("Failed to load initial chat:", e);
+          // navigate("/", { replace: true });
         }
       })();
     }
@@ -147,15 +156,35 @@ export default function Chat() {
           }
         }
       })
-      .catch(() => { });
+      .catch((err) => {
+        console.error("Failed to fetch chat history:", err);
+        setError("Failed to load chat history. The chat may not exist.");
+      });
   }, [chatId]);
 
   useEffect(() => {
     if (!chatId) return;
-    const wsUrl = (env.backend || window.location.origin).replace(/^http/, "ws") + `/ws/chat?chatId=${encodeURIComponent(chatId)}`;
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsURL(`/ws/chat?chatId=${encodeURIComponent(chatId)}`));
     wsRef.current = ws;
-    ws.onopen = () => setConnecting(false);
+
+    ws.onopen = () => {
+      setConnecting(false);
+    };
+
+    ws.onerror = (error) => {
+      console.error('[Chat] WebSocket error:', error);
+      setError("Connection to server failed. Please check if the backend is running.");
+      setConnecting(false);
+      setAwaitingAnswer(false);
+    };
+
+    ws.onclose = (event) => {
+      if (event.code !== 1000 && event.code !== 1001) {
+        console.warn('[Chat] WebSocket closed unexpectedly:', event.code, event.reason);
+      }
+      setConnecting(false);
+    };
+
     ws.onmessage = (ev) => {
       try {
         const m = JSON.parse(ev.data);
@@ -167,10 +196,27 @@ export default function Chat() {
           else if (norm.md) setTopic((t) => t || deriveTopicFromMarkdown(norm.md));
           setAwaitingAnswer(false);
           setTimeout(() => scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), 0);
+        } else if (m?.type === "error") {
+          console.error('[Chat] Server error:', m.error);
+          setError(m.error || "Unknown server error");
+          setAwaitingAnswer(false);
+          setConnecting(false);
+        } else if (m?.type === "done") {
+          setAwaitingAnswer(false);
+        }
+      } catch (err) {
+        console.error('[Chat] Failed to parse WebSocket message:', err);
+      }
+    };
+
+    return () => {
+      try {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
         }
       } catch { }
+      wsRef.current = null;
     };
-    return () => { try { ws.close(); } catch { } wsRef.current = null; };
   }, [chatId]);
 
   useEffect(() => {
@@ -252,12 +298,116 @@ export default function Chat() {
   const sendFollowup = async (q: string) => {
     const text = q.trim();
     if (!text || busy) return;
+    setError(null);
     setMessages((prev) => ([...(Array.isArray(prev) ? prev : []), { role: "user", content: text, at: Date.now() }]));
     setAwaitingAnswer(true);
     setBusy(true);
+
+    // Ensure WebSocket is connected before sending request
+    const ensureWebSocket = (chatIdToUse: string): Promise<void> => {
+      return new Promise((resolve, reject) => {
+        // Check if WebSocket already exists and is open
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          resolve();
+          return;
+        }
+
+        // Close existing if different chatId
+        if (wsRef.current) {
+          try {
+            wsRef.current.close();
+          } catch { }
+          wsRef.current = null;
+        }
+
+        // Create new WebSocket connection
+        const ws = new WebSocket(wsURL(`/ws/chat?chatId=${encodeURIComponent(chatIdToUse)}`));
+        wsRef.current = ws;
+
+        const timeout = setTimeout(() => {
+          reject(new Error('WebSocket connection timeout'));
+        }, 5000);
+
+        ws.onopen = () => {
+          clearTimeout(timeout);
+          setConnecting(false);
+          resolve();
+        };
+
+        ws.onerror = (error) => {
+          clearTimeout(timeout);
+          console.error('[Chat] WebSocket error:', error);
+          setError("Connection to server failed. Please check if the backend is running.");
+          setConnecting(false);
+          setAwaitingAnswer(false);
+          reject(error);
+        };
+
+        ws.onclose = (event) => {
+          clearTimeout(timeout);
+          if (event.code !== 1000 && event.code !== 1001) {
+            console.warn('[Chat] WebSocket closed unexpectedly:', event.code, event.reason);
+          }
+          setConnecting(false);
+        };
+
+        ws.onmessage = (ev) => {
+          try {
+            const m = JSON.parse(ev.data);
+            if (m?.type === "ready") {
+              // WebSocket is ready, but we already resolved in onopen
+            } else if (m?.type === "answer") {
+              const norm = normalizePayload(m.answer);
+              setMessages((prev) => ([...(Array.isArray(prev) ? prev : []), { role: "assistant", content: norm.md, at: Date.now() }]));
+              if (norm.flashcards.length) setCards(norm.flashcards);
+              if (norm.topic) setTopic(norm.topic);
+              else if (norm.md) setTopic((t) => t || deriveTopicFromMarkdown(norm.md));
+              setAwaitingAnswer(false);
+              setTimeout(() => scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), 0);
+            } else if (m?.type === "error") {
+              console.error('[Chat] Server error:', m.error);
+              setError(m.error || "Unknown server error");
+              setAwaitingAnswer(false);
+              setConnecting(false);
+            } else if (m?.type === "done") {
+              setAwaitingAnswer(false);
+            }
+          } catch (err) {
+            console.error('[Chat] Failed to parse WebSocket message:', err);
+          }
+        };
+      });
+    };
+
     try {
+      // First, ensure WebSocket is connected (use existing chatId or wait for new one)
+      const currentChatId = chatId || 'temp';
+      try {
+        await ensureWebSocket(currentChatId);
+      } catch (wsError) {
+        console.error('[Chat] Failed to establish WebSocket:', wsError);
+      }
+
+      // Now send the chat request
       const r = await chatJSON({ q: text, chatId: chatId || undefined });
-      if (r?.chatId && r.chatId !== chatId) setChatId(r.chatId);
+      if (r?.chatId) {
+        const newChatId = r.chatId;
+        if (newChatId !== chatId) {
+          setChatId(newChatId);
+          // Reconnect WebSocket with new chatId if it changed
+          if (newChatId !== currentChatId) {
+            try {
+              await ensureWebSocket(newChatId);
+            } catch (wsError) {
+              console.error('[Chat] Failed to reconnect WebSocket:', wsError);
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error('[Chat] Error sending message:', error);
+      setError(error.message || "Failed to send message");
+      setAwaitingAnswer(false);
     } finally {
       setBusy(false);
       setTimeout(() => scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), 0);
@@ -334,7 +484,7 @@ export default function Chat() {
                 onLearnMore={() => sendFollowup("Go deeper into this topic with advanced details, real-world examples, and a short analogy.")}
                 onStartQuiz={() => {
                   const t = topic || deriveTopicFromMarkdown(latestAssistantContent) || "General";
-                  navigate(`/quiz?topic=${encodeURIComponent(t)}`, { state: { topic: t } });
+                  navigate(`/quiz?topic=${encodeURIComponent(t)}`, { state: { topic: t, chatId } });
                 }}
                 onCreatePodcast={async () => {
                   try {
@@ -344,6 +494,10 @@ export default function Chat() {
                   } catch (error) {
                     console.error("Failed to create podcast:", error);
                   }
+                }}
+                onDebate={() => {
+                  const t = topic || deriveTopicFromMarkdown(latestAssistantContent) || "General";
+                  navigate(`/debate`, { state: { topic: t, chatId } });
                 }}
               />
             )}
@@ -363,6 +517,21 @@ export default function Chat() {
       <Composer disabled={busy} onSend={sendFollowup} />
       <BagFab count={bag.length} onClick={() => setBagOpen(true)} />
       <BagDrawer open={bagOpen} items={bag} onClose={() => setBagOpen(false)} onClear={clearBag} />
+
+      {error && (
+        <div className="fixed bottom-24 right-6 bg-red-900/90 border border-red-700 rounded-xl p-4 text-red-200 shadow-lg max-w-md animate-[slideInUp_0.3s_ease-out] z-50">
+          <div className="flex items-start gap-3">
+            <span className="text-xl">⚠️</span>
+            <div className="flex-1 font-medium">{error}</div>
+            <button
+              onClick={() => setError(null)}
+              className="text-red-400 hover:text-red-200 transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

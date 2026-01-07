@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
+import { env } from "../config/env";
+
+function wsURL(path: string) {
+    const u = new URL(env.backend);
+    const proto = u.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${u.host}${path}`;
+}
 
 type DebateMessage = {
     role: "user" | "assistant";
@@ -31,8 +38,12 @@ type DebateAnalysis = {
 export default function Debate() {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
+    const location = useLocation() as any;
 
-    const [topic, setTopic] = useState("");
+    const passedTopic = (location?.state && location.state.topic) || "";
+    const passedChatId = (location?.state && location.state.chatId) || "";
+
+    const [topic, setTopic] = useState(passedTopic || "");
     const [position, setPosition] = useState<"for" | "against">("for");
     const [debateId, setDebateId] = useState<string | null>(
         searchParams.get("debateId")
@@ -78,7 +89,7 @@ export default function Debate() {
 
     const fetchDebateSession = async (id: string) => {
         try {
-            const response = await fetch(`http://localhost:5000/debate/${id}`);
+            const response = await fetch(`${env.backend}/debate/${id}`);
             const data = await response.json();
             if (data.ok) {
                 setSession(data.session);
@@ -92,7 +103,7 @@ export default function Debate() {
     };
 
     const connectWebSocket = (id: string) => {
-        const ws = new WebSocket(`ws://localhost:5000/ws/debate?debateId=${id}`);
+        const ws = new WebSocket(wsURL(`/ws/debate?debateId=${encodeURIComponent(id)}`));
 
         ws.onopen = () => {
             console.log("WebSocket connected");
@@ -167,10 +178,10 @@ export default function Debate() {
         if (!topic.trim()) return;
 
         try {
-            const response = await fetch("http://localhost:5000/debate/start", {
+            const response = await fetch(`${env.backend}/debate/start`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ topic: topic.trim(), position }),
+                body: JSON.stringify({ topic: topic.trim(), position, chatId: passedChatId || undefined }),
             });
 
             const data = await response.json();
@@ -199,7 +210,7 @@ export default function Debate() {
 
         try {
             const response = await fetch(
-                `http://localhost:5000/debate/${debateId}/argue`,
+                `${env.backend}/debate/${encodeURIComponent(debateId)}/argue`,
                 {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -236,7 +247,7 @@ export default function Debate() {
 
         try {
             const response = await fetch(
-                `http://localhost:5000/debate/${debateId}/surrender`,
+                `${env.backend}/debate/${encodeURIComponent(debateId)}/surrender`,
                 {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -262,7 +273,7 @@ export default function Debate() {
         setAnalysisPhase("Starting analysis...");
 
         // Connect to analysis WebSocket first
-        const analysisWs = new WebSocket(`ws://localhost:5000/ws/debate/analyze?debateId=${debateId}`);
+        const analysisWs = new WebSocket(wsURL(`/ws/debate/analyze?debateId=${encodeURIComponent(debateId)}`));
 
         analysisWs.onopen = () => {
             console.log("Analysis WebSocket connected");
@@ -313,7 +324,7 @@ export default function Debate() {
         // Trigger analysis on backend
         try {
             const response = await fetch(
-                `http://localhost:5000/debate/${debateId}/analyze`,
+                `${env.backend}/debate/${encodeURIComponent(debateId)}/analyze`,
                 {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },

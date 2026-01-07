@@ -93,9 +93,9 @@ async function synth_edge(segs: TSeg[], dir: string, base: string, emit?: (m: an
 }
 
 async function synth_eleven(segs: TSeg[], dir: string, base: string, emit?: (m: any) => void) {
-  const k = config.eleven_api_key || ''
-  const v0 = config.eleven_voice_a || ''
-  const v1 = config.eleven_voice_b || v0
+  const k = process.env.ELEVEN_API_KEY || ''
+  const v0 = process.env.ELEVEN_VOICE_A || ''
+  const v1 = process.env.ELEVEN_VOICE_B || v0
   const files: string[] = []
 
   if (!k) throw new Error('eleven_api_key_missing')
@@ -127,14 +127,14 @@ async function synth_eleven(segs: TSeg[], dir: string, base: string, emit?: (m: 
 }
 
 async function synth_google(segs: TSeg[], dir: string, base: string, emit?: (m: any) => void) {
-  const creds = config.google_creds || process.env.GOOGLE_APPLICATION_CREDENTIALS
+  const creds = process.env.GOOGLE_APPLICATION_CREDENTIALS
   if (!creds) throw new Error('google_creds_missing')
 
   const mod = await import('@google-cloud/text-to-speech')
   const TTS: any = (mod as any).default || mod
   const c = new TTS.TextToSpeechClient()
-  const v0 = config.tts_voice_google || 'en-US-Neural2-F'
-  const v1 = config.tts_voice_alt_google || 'en-US-Neural2-D'
+  const v0 = process.env.TTS_VOICE_GOOGLE || 'en-US-Neural2-F'
+  const v1 = process.env.TTS_VOICE_ALT_GOOGLE || 'en-US-Neural2-D'
   const files: string[] = []
 
   for (let i = 0; i < segs.length; i++) {

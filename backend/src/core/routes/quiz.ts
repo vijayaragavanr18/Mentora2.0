@@ -33,7 +33,7 @@ export function quizRoutes(app: any) {
       try {
         if (ws.readyState === 1)
           ws.send(JSON.stringify({ type: "ping", t: Date.now() }));
-      } catch {}
+      } catch { }
     }, 15000);
     ws.on("close", () => clearInterval(iv));
   });
@@ -41,11 +41,13 @@ export function quizRoutes(app: any) {
   app.post("/quiz", async (req: any, res: any) => {
     try {
       const topic = String(req.body?.topic || "").trim();
+      const chatId = req.body?.chatId ? String(req.body.chatId).trim() : undefined;
+
       if (!topic)
         return res.status(400).send({ ok: false, error: "topic required" });
 
       const quizId = crypto.randomUUID();
-      qlog("start", quizId, "topic:", topic);
+      qlog("start", quizId, "topic:", topic, "chatId:", chatId);
 
       res
         .status(202)
@@ -54,7 +56,7 @@ export function quizRoutes(app: any) {
       setImmediate(async () => {
         try {
           emitToAll(qs.get(quizId), { type: "phase", value: "generating" });
-          const qz = await withTimeout(handleQuiz(topic), 60000, "handleQuiz");
+          const qz = await withTimeout(handleQuiz(topic, chatId), 60000, "handleQuiz");
           qlog("generated", quizId, Array.isArray(qz) ? qz.length : "n/a");
           emitToAll(qs.get(quizId), { type: "quiz", quiz: qz });
           emitToAll(qs.get(quizId), { type: "done" });

@@ -61,6 +61,7 @@ export function debateRoutes(app: any) {
     app.post("/debate/start", async (req: any, res: any) => {
         try {
             const { topic, position } = req.body;
+            const chatId = req.body.chatId;
 
             if (!topic || !topic.trim()) {
                 return res.status(400).json({
@@ -76,7 +77,7 @@ export function debateRoutes(app: any) {
                 });
             }
 
-            const session = await createDebateSession(topic.trim(), position);
+            const session = await createDebateSession(topic.trim(), position, chatId);
 
             res.json({
                 ok: true,
