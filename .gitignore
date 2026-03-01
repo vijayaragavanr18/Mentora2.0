@@ -1,23 +1,50 @@
-# IDE
-.idea
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
 
-# Dependencies
-node_modules
+# Virtual environment
+venv/
+.venv/
+env/
+.env/
 
-# Build output
-dist
-storage
-
-# Cache
-.vite
-.cache
-
-# Environment
+# ── Environment files ─────────────────────────────────────────────────────────
 .env
+.env.local
+.env.*.local
 
-# Database
-database.sqlite
+# ── Node / Next.js ────────────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+.npm
 
-# TypeScript build info
-tsconfig.tsbuildinfo
-vite.config.tsbuildinfo
+# ── Database / Vector store ───────────────────────────────────────────────────
+*.sqlite3
+chroma_db/
+
+# ── Uploads ───────────────────────────────────────────────────────────────────
+mentora-backend/uploads/
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ──────────────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+ps.txt

@@ -1,0 +1,34 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Mentora — Ollama AI Model Definitions
+# ──────────────────────────────────────────────────────────────────────────────
+# This file documents which Ollama models the project requires.
+# Run `models/ollama/setup.sh` to pull all models and configure OLLAMA_MODELS
+# to store them inside this directory.
+# ──────────────────────────────────────────────────────────────────────────────
+
+models:
+
+  # ── Language model (chat + RAG answering) ───────────────────────────────────
+  - name: phi4-mini
+    tag: latest
+    size_gb: 2.5
+    purpose: "Chat, RAG answer generation, quiz/exam/debate/smartnotes"
+    parameters: 3.8B
+    context_window: 16384
+    used_by:
+      - services/llm_service.py
+      - services/rag_pipeline.py
+
+  # ── Embedding model (semantic search) ───────────────────────────────────────
+  - name: mxbai-embed-large
+    tag: latest
+    size_gb: 0.67
+    purpose: "Text embeddings for ChromaDB vector search"
+    dimensions: 1024
+    used_by:
+      - services/embedding_service.py
+
+settings:
+  base_url: "http://localhost:11434"
+  # OLLAMA_MODELS env var points to this directory so weights stay in the repo
+  models_dir: "./models/ollama"
