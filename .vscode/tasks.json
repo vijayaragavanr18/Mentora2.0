@@ -1,19 +1,19 @@
 {
-	"version": "2.0.0",
-	"tasks": [
-		{
-			"label": "Backend: FastAPI (port 5000)",
-			"type": "shell",
-			"command": "cd mentora-backend && /home/vijayaragavan/Projects/pagelm/mentora-backend/venv/bin/uvicorn main:app --host 0.0.0.0 --port 5000 --reload",
-			"isBackground": true,
-			"problemMatcher": []
-		},
-		{
-			"label": "Frontend: Next.js (port 3000)",
-			"type": "shell",
-			"command": "cd mentora-frontend && npm run dev",
-			"isBackground": true,
-			"problemMatcher": []
-		}
-	]
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Backend: FastAPI (port 5000)",
+            "type": "shell",
+            "command": "cd mentora-backend && venv_new/bin/uvicorn main:app --host 0.0.0.0 --port 5000 --reload",
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "Frontend: Vite/React (port 3000)",
+            "type": "shell",
+            "command": "cd Mentora-frontend && npm run dev",
+            "isBackground": true,
+            "problemMatcher": []
+        }
+    ]
 }

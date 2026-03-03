@@ -22,6 +22,7 @@ class DocumentOut(BaseModel):
     page_count: int = 0
     file_size_kb: int = 0
     status: str = "processing"
+    chroma_collection_id: Optional[str] = None   # e.g. "doc_<uuid>" — use this for RAG queries
     summary: Optional[str] = None
     faq: Optional[List[FAQItem]] = None
     created_at: datetime

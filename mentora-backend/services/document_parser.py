@@ -1,7 +1,11 @@
 """Document Parser — handles any file type for RAG ingestion."""
 import os
 import io
-from typing import List, Tuple
+import re
+import logging
+from typing import Any, Dict, List, Tuple
+
+logger = logging.getLogger("mentora.parser")
 
 # PDF
 import fitz  # PyMuPDF
@@ -58,36 +62,95 @@ except ImportError:
     EPUB_AVAILABLE = False
 
 
-def chunk_text(text: str, chunk_size: int = 250, overlap: int = 30) -> List[str]:
-    """Split text into overlapping chunks.
-    
-    250 words ≈ 325 tokens — safely under mxbai-embed-large's 512-token limit.
+# ─── Text Utilities ──────────────────────────────────────────────────────────
+
+def _clean_text(text: str) -> str:
+    """Normalize whitespace and remove common noise characters."""
+    text = re.sub(r"[\x00\x0c\r]", "", text)  # remove null/form-feed/CR
+    text = re.sub(r"[ \t]+", " ", text)          # collapse horizontal whitespace
+    text = re.sub(r"\n{3,}", "\n\n", text)        # max two consecutive newlines
+    return text.strip()
+
+
+# Sentence boundary: period/!/? followed by whitespace then a capital, digit, or quote
+_SENT_SPLIT = re.compile(r'(?<=[.!?])\s+(?=[A-Z\d"\'\'(])')
+
+
+def chunk_text(text: str, chunk_size: int = 200, overlap: int = 40) -> List[str]:
     """
-    words = text.split()
-    chunks = []
-    step = chunk_size - overlap
-    for i in range(0, len(words), step):
-        chunk = " ".join(words[i : i + chunk_size])
-        if chunk.strip():
-            chunks.append(chunk.strip())
-    return chunks or [text.strip()]
+    Sentence-aware overlapping chunker.
+
+    Splits at sentence boundaries first so embeddings capture complete thoughts.
+    Target ≈ 200 words per chunk (≈ 260 tokens), well inside
+    mxbai-embed-large's 512-token limit.  Overlap carries context across
+    chunk boundaries so retrieval doesn't miss split answers.
+    """
+    text = _clean_text(text)
+    sentences = [s.strip() for s in _SENT_SPLIT.split(text) if s.strip()]
+    if not sentences:
+        sentences = [text]
+
+    chunks: List[str] = []
+    buf: List[str] = []
+    buf_words = 0
+
+    for sent in sentences:
+        words = sent.split()
+        word_count = len(words)
+
+        # Single sentence longer than chunk_size → sub-split at word boundary
+        if word_count > chunk_size:
+            if buf:
+                chunks.append(" ".join(buf))
+                buf = buf[-overlap:]
+                buf_words = len(buf)
+            # Sub-split the long sentence
+            step = chunk_size - overlap
+            for i in range(0, len(words), step):
+                sub = words[i: i + chunk_size]
+                if sub:
+                    chunks.append(" ".join(sub))
+            # Keep tail for overlap into next sentence
+            buf = words[-overlap:] if len(words) >= overlap else words[:]
+            buf_words = len(buf)
+            continue
+
+        if buf_words + word_count > chunk_size and buf:
+            chunks.append(" ".join(buf))
+            buf = buf[-overlap:]   # overlap carried forward
+            buf_words = len(buf)
+
+        buf.extend(words)
+        buf_words += word_count
+
+    if buf:
+        chunks.append(" ".join(buf))
+
+    return [c for c in chunks if c.strip()] or [text.strip()]
+
+
+def _pdf_pages(file_path: str) -> List[Tuple[str, int]]:
+    """
+    Return a list of (clean_page_text, 1-based_page_number) for every
+    non-empty page in a PDF.  Falls back to OCR on image-only pages.
+    """
+    doc = fitz.open(file_path)
+    pages: List[Tuple[str, int]] = []
+    for page_num, page in enumerate(doc, 1):
+        text = page.get_text("text").strip()
+        if not text and OCR_AVAILABLE:
+            pix = page.get_pixmap(dpi=200)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            text = pytesseract.image_to_string(img).strip()
+        if text:
+            pages.append((_clean_text(text), page_num))
+    return pages
 
 
 def parse_pdf(file_path: str) -> Tuple[str, int]:
-    """Extract text from PDF. Falls back to OCR if text layer is empty."""
-    doc = fitz.open(file_path)
-    pages = []
-    for page in doc:
-        text = page.get_text("text").strip()
-        if text:
-            pages.append(text)
-        elif OCR_AVAILABLE:
-            # OCR fallback for scanned pages
-            pix = page.get_pixmap(dpi=200)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            ocr_text = pytesseract.image_to_string(img)
-            pages.append(ocr_text.strip())
-    return "\n\n".join(pages), len(pages)
+    """Return (full_text, page_count). Used for summary; chunking uses _pdf_pages."""
+    pages = _pdf_pages(file_path)
+    return "\n\n".join(p[0] for p in pages), len(pages)
 
 
 def parse_pptx(file_path: str) -> Tuple[str, int]:
@@ -210,26 +273,71 @@ def parse_markdown(file_path: str) -> Tuple[str, int]:
     with open(file_path, encoding="utf-8", errors="ignore") as f:
         text = f.read()
     # Strip markdown syntax for cleaner embedding
-    import re
-    text = re.sub(r"#{1,6}\s*", "", text)          # headings
-    text = re.sub(r"\*\*|__|\*|_|`{1,3}", "", text) # bold/italic/code
-    text = re.sub(r"!?\[.*?\]\(.*?\)", "", text)    # links/images
+    text = re.sub(r"#{1,6}\s*", "", text)              # headings
+    text = re.sub(r"\*\*|__|\*|_|`{1,3}", "", text)   # bold/italic/code
+    text = re.sub(r"!?\[.*?\]\(.*?\)", "", text)        # links/images
     text = re.sub(r"^[-*+>]\s+", "", text, flags=re.M) # lists/blockquotes
     lines = [l for l in text.splitlines() if l.strip()]
     return "\n".join(lines), len(lines)
 
 
-def parse_file(file_path: str) -> Tuple[str, int, List[str]]:
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def parse_file(file_path: str) -> Tuple[str, int, List[Dict[str, Any]]]:
     """
     Parse any file and return (full_text, page_count, chunks).
-    Unknown formats are read as plain text with encoding detection.
+
+    Each chunk is a dict::
+
+        {
+            "text":         str,   # chunk content (≤ 200 words)
+            "page":         int,   # 1-based page/slide number (0 = unknown)
+            "chunk_index":  int,   # sequential index within this document
+            "source_type":  str,   # file extension without leading dot
+        }
+
+    PDF and PPTX are chunked section-by-section to preserve page numbers.
+    All other formats produce page=0 chunks.
     """
     ext = os.path.splitext(file_path)[-1].lower()
+    src = ext.lstrip(".")
+    idx = 0
+    logger.info("📄 [PARSER] Parsing '%s'  type=%s", os.path.basename(file_path), ext or "unknown")
+
+    # ── PDF: chunk per page so page numbers are preserved ──────────
     if ext == ".pdf":
-        text, pages = parse_pdf(file_path)
-    elif ext in (".pptx", ".ppt"):
-        text, pages = parse_pptx(file_path)
-    elif ext in (".docx", ".doc"):
+        page_list = _pdf_pages(file_path)
+        all_text_parts: List[str] = []
+        chunks: List[Dict[str, Any]] = []
+        for page_text, page_num in page_list:
+            all_text_parts.append(page_text)
+            for c in chunk_text(page_text):
+                chunks.append({"text": c, "page": page_num,
+                                "chunk_index": idx, "source_type": src})
+                idx += 1
+        logger.info("✅ [PARSER] PDF — %d pages → %d chunks", len(page_list), len(chunks))
+        return "\n\n".join(all_text_parts), len(page_list), chunks
+
+    # ── PPTX: chunk per slide ────────────────────────────────────────
+    if ext in (".pptx", ".ppt") and PPTX_AVAILABLE:
+        prs = Presentation(file_path)
+        all_text_parts = []
+        chunks = []
+        for slide_num, slide in enumerate(prs.slides, 1):
+            parts = [shape.text.strip() for shape in slide.shapes
+                     if hasattr(shape, "text") and shape.text.strip()]
+            if parts:
+                slide_text = _clean_text("\n".join(parts))
+                all_text_parts.append(slide_text)
+                for c in chunk_text(slide_text):
+                    chunks.append({"text": c, "page": slide_num,
+                                   "chunk_index": idx, "source_type": src})
+                    idx += 1
+        logger.info("✅ [PARSER] PPTX — %d slides → %d chunks", len(prs.slides), len(chunks))
+        return "\n\n".join(all_text_parts), len(prs.slides), chunks
+
+    # ── All other formats: flat text then chunk ──────────────────────
+    if ext in (".docx", ".doc"):
         text, pages = parse_docx(file_path)
     elif ext in (".xlsx", ".xls", ".xlsm"):
         text, pages = parse_excel(file_path)
@@ -248,8 +356,11 @@ def parse_file(file_path: str) -> Tuple[str, int, List[str]]:
     elif ext in (".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp", ".gif"):
         text, pages = parse_image(file_path)
     else:
-        # Fallback: try to read as plain text (handles .log, .yaml, .toml, .ini, etc.)
         text, pages = parse_txt(file_path)
 
-    chunks = chunk_text(text) if text.strip() else []
+    text = _clean_text(text)
+    raw = chunk_text(text) if text else []
+    chunks = [{"text": c, "page": 0, "chunk_index": i, "source_type": src}
+              for i, c in enumerate(raw) if c.strip()]
+    logger.info("✅ [PARSER] %s — %d pages → %d chunks", ext, pages, len(chunks))
     return text, pages, chunks

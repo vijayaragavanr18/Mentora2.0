@@ -23,7 +23,7 @@ async def stream_response(
         "model": llm_model,
         "messages": messages,
         "stream": True,
-        "options": {"temperature": 0.7, "num_ctx": 8192},
+        "options": {"temperature": 0.7, "num_ctx": 2048, "num_predict": 512},
     }
 
     async with httpx.AsyncClient(timeout=None) as client:
@@ -64,10 +64,10 @@ async def generate(
         "model": llm_model,
         "messages": messages,
         "stream": False,
-        "options": {"temperature": temperature, "num_ctx": 8192},
+        "options": {"temperature": temperature, "num_ctx": 2048, "num_predict": 512},
     }
 
-    async with httpx.AsyncClient(timeout=300) as client:
+    async with httpx.AsyncClient(timeout=None) as client:
         resp = await client.post(
             f"{settings.ollama_base_url}/api/chat", json=payload
         )
@@ -87,9 +87,9 @@ async def complete(
         "model": llm_model,
         "prompt": prompt,
         "stream": False,
-        "options": {"temperature": temperature, "num_ctx": 8192},
+        "options": {"temperature": temperature, "num_ctx": 2048, "num_predict": 1024},
     }
-    async with httpx.AsyncClient(timeout=300) as client:
+    async with httpx.AsyncClient(timeout=None) as client:
         resp = await client.post(
             f"{settings.ollama_base_url}/api/generate", json=payload
         )

@@ -105,8 +105,20 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(UserORM).where(UserORM.email == body.email))
     user = result.scalar_one_or_none()
-    if not user or not verify_password(body.password, user.password_hash):
-        raise HTTPException(401, "Invalid email or password")
+    
+    # Mockup login: Accept any inputs. Create user if they don't exist.
+    if not user:
+        user = UserORM(
+            id=uuid.uuid4(),
+            name=body.email.split("@")[0] if "@" in body.email else body.email or "MockUser",
+            email=body.email,
+            password_hash=hash_password("mockpassword"),
+            role="student",
+            grade="N/A",
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
 
     token = create_token(str(user.id))
     user_out = UserOut(

@@ -2,11 +2,12 @@
 import os
 import uuid
 import shutil
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, or_
 
 from database.connection import get_db
 from models.document import DocumentORM, DocumentOut
@@ -16,6 +17,7 @@ from config import get_settings
 
 router = APIRouter(prefix="/api", tags=["upload"])
 settings = get_settings()
+logger = logging.getLogger("mentora.upload")
 
 # All accepted extensions — virtually everything readable
 ALLOWED_EXTENSIONS = {
@@ -46,9 +48,13 @@ async def _ingest_and_update(
     from database.connection import AsyncSessionLocal
     from sqlalchemy import update as sql_update
 
+    logger.info("🗂️  [UPLOAD] Background ingest started  doc_id=%s  file=%s", doc_id, os.path.basename(file_path))
     async with AsyncSessionLocal() as db:
         try:
             result = await rag_pipeline.ingest_document(file_path, doc_id, metadata)
+            logger.info("📊 [UPLOAD] Ingest result: status=%s  chunks=%s  pages=%s  size_kb=%s",
+                        result.get("status"), result.get("chunks"),
+                        result.get("page_count"), result.get("file_size_kb"))
 
             # Generate summary + FAQ from raw chunks (non-blocking, best-effort)
             summary_text = None
@@ -56,11 +62,13 @@ async def _ingest_and_update(
             try:
                 raw_chunks = result.get("raw_chunks", [])
                 doc_title = metadata.get("title") or metadata.get("original_name", "Document")
+                logger.info("📝 [UPLOAD] Generating summary + FAQ for '%s' (%d chunks)...", doc_title, len(raw_chunks))
                 sf = await rag_pipeline.generate_summary_and_faq(raw_chunks, doc_title)
                 summary_text = sf.get("summary")
                 faq_data = sf.get("faq", [])
+                logger.info("✅ [UPLOAD] Summary done — %d FAQ items", len(faq_data))
             except Exception as sf_err:
-                print(f"[upload] summary/faq generation failed (non-fatal): {sf_err}")
+                logger.warning("[UPLOAD] summary/faq failed (non-fatal): %s", sf_err)
 
             stmt = (
                 sql_update(DocumentORM)
@@ -84,7 +92,7 @@ async def _ingest_and_update(
             )
             await db.execute(stmt)
             await db.commit()
-            print(f"Ingest error for {doc_id}: {e}")
+            logger.error("❌ [UPLOAD] Ingest FAILED for doc_id=%s: %s", doc_id, e, exc_info=True)
 
 
 @router.post("/upload", response_model=DocumentOut, status_code=201)
@@ -107,6 +115,10 @@ async def upload_file(
     file_path = os.path.join(settings.upload_dir, safe_name)
     with open(file_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
+    file_size_bytes = os.path.getsize(file_path)
+    logger.info("📥 [UPLOAD] Received '%s'  ext=%s  size=%.1fKB  user=%s",
+                file.filename, ext, file_size_bytes / 1024,
+                user.username if user else "anonymous")
 
     # Create DB record
     db_doc = DocumentORM(
@@ -127,6 +139,7 @@ async def upload_file(
     chroma_id = f"doc_{db_doc.id}"
     metadata = {"subject": subject, "grade": grade, "original_name": file.filename}
     background.add_task(_ingest_and_update, file_path, chroma_id, str(db_doc.id), metadata)
+    logger.info("⏩ [UPLOAD] Background ingest queued  db_doc_id=%s  chroma_id=%s", db_doc.id, chroma_id)
 
     return DocumentOut(
         id=str(db_doc.id),
@@ -138,6 +151,7 @@ async def upload_file(
         page_count=0,
         file_size_kb=0,
         status="processing",
+        chroma_collection_id=chroma_id,
         created_at=db_doc.created_at,
         summary=None,
         faq=[],
@@ -151,7 +165,10 @@ async def list_documents(
 ):
     stmt = select(DocumentORM)
     if user:
-        stmt = stmt.where(DocumentORM.user_id == user.id)
+        # Show docs owned by this user OR anonymous docs (user_id IS NULL)
+        stmt = stmt.where(
+            or_(DocumentORM.user_id == user.id, DocumentORM.user_id == None)
+        )
     result = await db.execute(stmt.order_by(DocumentORM.created_at.desc()))
     docs = result.scalars().all()
     return [
@@ -165,6 +182,7 @@ async def list_documents(
             page_count=d.page_count or 0,
             file_size_kb=d.file_size_kb or 0,
             status=d.status or "processing",
+            chroma_collection_id=d.chroma_collection_id,
             created_at=d.created_at,
             summary=d.summary,
             faq=d.faq or [],

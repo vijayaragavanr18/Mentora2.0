@@ -1,8 +1,9 @@
-"""Tools Router — Podcast generator, Smart Notes, Transcriber."""
+"""Tools Router — Podcast generator, Smart Notes, Transcriber, Generate."""
 import uuid
 import os
 import shutil
-from typing import Optional
+import logging
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,137 @@ from config import get_settings
 
 router = APIRouter(tags=["tools"])
 settings = get_settings()
+logger = logging.getLogger("mentora.tools")
+
+
+def _resolve_chroma_id(doc_id: str) -> str:
+    """
+    Normalise a document reference to a ChromaDB collection ID.
+    The frontend may send either the raw DB UUID or the full 'doc_<uuid>' form.
+    """
+    return doc_id if doc_id.startswith("doc_") else f"doc_{doc_id}"
+
+
+# ─── Generate (NotebookLM-style outputs) ──────────────────────────────────────
+class GenerateRequest(BaseModel):
+    type: str                           # summary | study-guide | faq | briefing | timeline | outline | quiz | flashcards
+    doc_ids: Optional[List[str]] = None # chroma collection IDs (doc_xxx)
+    topic: Optional[str] = None         # fallback topic label
+
+
+_GENERATE_PROMPTS: dict = {
+    "summary": (
+        "You are an expert academic summariser.\n"
+        "Using ONLY the document excerpts below, write a clear, structured summary:\n"
+        "- 1 paragraph of 3-4 sentences giving the overall topic and purpose\n"
+        "- 3-5 bullet points for the most important facts / arguments\n"
+        "- 1 sentence 'Key takeaway'\n\n"
+        "Document excerpts:\n{context}\n\nSummary:"
+    ),
+    "study-guide": (
+        "You are a professional study-guide author.\n"
+        "Using the document excerpts below, create a comprehensive study guide:\n"
+        "## Overview\n(2-3 sentences)\n\n## Core Concepts\n(numbered list with brief definitions)\n\n"
+        "## Key Facts & Details\n(bullet points grouped by sub-topic)\n\n"
+        "## Important Relationships\n(how concepts connect)\n\n"
+        "## Exam Tips\n(3-4 tips based on this material)\n\n"
+        "Document excerpts:\n{context}\n\nStudy Guide:"
+    ),
+    "faq": (
+        "You are a skilled educator.\n"
+        "Based ONLY on the document excerpts below, generate 8 frequently-asked questions with concise, accurate answers.\n"
+        "Format each as:\nQ: <question>\nA: <answer>\n\n"
+        "Document excerpts:\n{context}\n\nFAQs:"
+    ),
+    "briefing": (
+        "You are a professional briefing writer.\n"
+        "Write an executive briefing document from the excerpts below:\n"
+        "**SUBJECT:** (one line)\n**DATE:** (use 'Current')\n**PURPOSE:** (one sentence)\n"
+        "**BACKGROUND:** (2-3 sentences)\n**KEY POINTS:**\n(5 bullet points)\n"
+        "**RECOMMENDATIONS / ACTION ITEMS:**\n(2-3 bullet points)\n\n"
+        "Document excerpts:\n{context}\n\nBriefing:"
+    ),
+    "timeline": (
+        "You are a historian and educator.\n"
+        "From the document excerpts below, extract and organise all events, processes, or steps in chronological or logical order.\n"
+        "Format as:\n[Step/Date/Era] — Description\n\n"
+        "If no explicit dates exist, use logical ordering (Step 1, Step 2, …).\n\n"
+        "Document excerpts:\n{context}\n\nTimeline:"
+    ),
+    "outline": (
+        "You are a curriculum designer.\n"
+        "Create a hierarchical topic outline from the document excerpts below.\n"
+        "Use:\nI. Major Topic\n  A. Sub-topic\n    1. Detail\n    2. Detail\n  B. Sub-topic\nII. Major Topic\n…\n\n"
+        "Document excerpts:\n{context}\n\nOutline:"
+    ),
+}
+
+
+@router.post("/generate")
+async def generate_content(
+    body: GenerateRequest,
+    user: Optional[UserORM] = Depends(get_current_user),
+):
+    """
+    NotebookLM-style generation.  Retrieves RAG context from one or more
+    documents, then runs a type-specific prompt through the LLM.
+    """
+    output_type = body.type.lower()
+    logger.info("🔮 [GENERATE] type=%s  doc_ids=%s", output_type, body.doc_ids)
+
+    # ── Retrieve context from all selected docs ────────────────────────────
+    context_parts: List[str] = []
+    if body.doc_ids:
+        for did in body.doc_ids:
+            chroma_id = _resolve_chroma_id(did)
+            try:
+                chunks = await rag_pipeline.retrieve_context(
+                    body.topic or output_type, chroma_id, top_k=4
+                )
+                for c in chunks:
+                    page = c.get("metadata", {}).get("page")
+                    label = f"[{chroma_id} p.{page}]" if page else f"[{chroma_id}]"
+                    context_parts.append(f"{label}\n{c['text']}")
+            except Exception as e:
+                logger.warning("[GENERATE] Context retrieval failed for %s: %s", chroma_id, e)
+
+    if not context_parts:
+        context_str = f"Topic: {body.topic or output_type}\n(No uploaded document context available — answer from general knowledge.)"
+    else:
+        context_str = "\n\n---\n\n".join(context_parts[:16])  # cap at 16 chunks
+
+    # ── Quiz and Flashcards are handled separately ─────────────────────────
+    if output_type == "quiz":
+        from routers.quiz import QuizRequest
+        topic = body.topic or "the uploaded document"
+        prompt = (
+            f"You are a quiz master. Using the content below, generate 6 multiple-choice questions.\n"
+            f"For each question output EXACTLY:\nQ: <question>\nA) <choice>\nB) <choice>\nC) <choice>\nD) <choice>\nAnswer: <letter>\n\n"
+            f"Content:\n{context_str}\n\nQuiz:"
+        )
+        text_out = await llm_service.generate(prompt)
+        return {"type": output_type, "content": text_out}
+
+    if output_type == "flashcards":
+        prompt = (
+            f"Using the content below, create 8 flashcards.\n"
+            f"For each card output EXACTLY:\nFRONT: <term or question>\nBACK: <definition or answer>\n\n"
+            f"Content:\n{context_str}\n\nFlashcards:"
+        )
+        text_out = await llm_service.generate(prompt)
+        return {"type": output_type, "content": text_out}
+
+    # ── Structured outputs ─────────────────────────────────────────────────
+    prompt_template = _GENERATE_PROMPTS.get(output_type)
+    if not prompt_template:
+        raise HTTPException(400, f"Unknown generation type: {output_type}")
+
+    prompt = prompt_template.format(context=context_str)
+    logger.info("⏳ [GENERATE] Sending prompt to LLM (context chars=%d)", len(context_str))
+    text_out = await llm_service.generate(prompt, system="You are Mentora, a helpful AI study assistant. Be clear and concise.")
+    logger.info("✅ [GENERATE] Done — output chars=%d", len(text_out))
+
+    return {"type": output_type, "content": text_out}
 
 
 # ─── Podcast ──────────────────────────────────────────────────────────────────

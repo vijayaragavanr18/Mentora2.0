@@ -16,17 +16,27 @@ from routers.auth import get_current_user, UserORM
 router = APIRouter(tags=["chat"])
 
 
+def _resolve_chroma_ids(ids: Optional[List[str]]) -> Optional[List[str]]:
+    """Normalise doc IDs to 'doc_<uuid>' form (ChromaDB collection names)."""
+    if not ids:
+        return ids
+    return [d if d.startswith("doc_") else f"doc_{d}" for d in ids]
+
+
 class ChatRequest(BaseModel):
     q: str
     doc_id: Optional[str] = None
+    doc_ids: Optional[List[str]] = None   # multi-source support
     chat_id: Optional[str] = None
     history: Optional[List[dict]] = None
     stream: bool = True
 
 
 class ChatJSONRequest(BaseModel):
-    q: str
+    q: Optional[str] = None
+    message: Optional[str] = None
     doc_id: Optional[str] = None
+    doc_ids: Optional[List[str]] = None   # multi-source support
     chat_id: Optional[str] = None
     history: Optional[List[dict]] = None
 
@@ -44,9 +54,12 @@ async def chat_stream(
 
     async def event_gen():
         citations_sent = False
+        # Resolve doc_ids: prefer doc_ids list, fall back to single doc_id
+        raw_ids = body.doc_ids or ([body.doc_id] if body.doc_id else None)
+        resolved_ids = _resolve_chroma_ids(raw_ids)
         try:
             async for token in rag_pipeline.stream_answer(
-                query, [body.doc_id] if body.doc_id else None, body.history
+                query, resolved_ids, body.history
             ):
                 if token.startswith("__CITATIONS__"):
                     # Send citations as a special event
@@ -72,11 +85,14 @@ async def chat_json(
     user: Optional[UserORM] = Depends(get_current_user),
 ):
     """Non-streaming JSON chat response."""
-    query = body.q.strip()
+    query = (body.q or body.message or "").strip()
     if not query:
-        raise HTTPException(400, "query is required")
+        raise HTTPException(400, "query or message is required")
 
-    response, citations = await rag_pipeline.answer(query, [body.doc_id] if body.doc_id else None)
+    # Resolve doc_ids: prefer doc_ids list, fall back to single doc_id
+    raw_ids = body.doc_ids or ([body.doc_id] if body.doc_id else None)
+    resolved_ids = _resolve_chroma_ids(raw_ids)
+    response, citations = await rag_pipeline.answer(query, resolved_ids)
     chat_id = body.chat_id or str(uuid.uuid4())
     return {
         "chat_id": chat_id,
